@@ -1,0 +1,6 @@
+{
+  "name": "Poincaré Apple Box",
+  "description": "Interactive 3D thermodynamic and molecular-dynamics simulation of the Apple in a Box thought experiment and Poincaré recurrence theorem.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
