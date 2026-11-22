@@ -4,12 +4,14 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { AppleBoxEngine } from '../physics/engine';
 import {
   CameraPreset,
+  SPECIES_ID,
   TelemetrySnapshot,
   ThermodynamicStage,
   WallFace,
 } from '../physics/types';
 import { buildRealisticAppleMesh, RealisticAppleAssembly } from './appleMesh';
 import { buildContainmentBox, ContainmentBoxAssembly } from './containmentBox';
+import { buildSpaceBackdrop, SpaceBackdropAssembly } from './spaceBackdrop';
 
 export interface SceneVisualState {
   coreView: boolean;
@@ -17,10 +19,10 @@ export interface SceneVisualState {
 }
 
 const CAMERA_PRESETS: Record<CameraPreset, { pos: [number, number, number]; target: [number, number, number] }> = {
-  isometric: { pos: [7.6, 5.2, 8.8], target: [0, -0.15, 0] },
-  front: { pos: [0, 0.2, 11.4], target: [0, -0.1, 0] },
-  top: { pos: [0.01, 11.8, 1.8], target: [0, 0, 0] },
-  inside: { pos: [2.6, 1.3, 2.8], target: [0, 0.15, 0] },
+  isometric: { pos: [6.4, 3.2, 12.6], target: [0, -0.35, 0] },
+  front: { pos: [0, -0.1, 13.0], target: [0, -0.25, 0] },
+  top: { pos: [0.01, 13.4, 2.2], target: [0, -0.1, 0] },
+  inside: { pos: [2.2, -0.4, 2.6], target: [0, -1.6, 0] },
 };
 
 const WALL_FACES: WallFace[] = ['px', 'nx', 'py', 'ny', 'pz', 'nz'];
@@ -31,7 +33,7 @@ const _pos = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 const _scale = new THREE.Vector3();
 const _color = new THREE.Color();
-const _gasColor = new THREE.Color();
+const _targetColor = new THREE.Color();
 const _rotColor = new THREE.Color(0x52361c);
 const _camTargetPos = new THREE.Vector3();
 const _camTargetLook = new THREE.Vector3();
@@ -51,6 +53,26 @@ function detectSoftwareWebGL(): boolean {
   }
 }
 
+function createAtomHaloTexture(): THREE.CanvasTexture {
+  const size = 64;
+  const canvas = document.createElement('canvas');
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d')!;
+  const half = size / 2;
+  const grad = ctx.createRadialGradient(half, half, 0, half, half, half);
+  grad.addColorStop(0.0, 'rgba(255, 255, 255, 0.95)');
+  grad.addColorStop(0.24, 'rgba(255, 255, 255, 0.52)');
+  grad.addColorStop(0.55, 'rgba(255, 255, 255, 0.1)');
+  grad.addColorStop(1.0, 'rgba(0, 0, 0, 0.0)');
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
 export class AppleBoxSceneController {
   public readonly engine: AppleBoxEngine;
   private readonly container: HTMLElement;
@@ -62,13 +84,21 @@ export class AppleBoxSceneController {
   private readonly scene: THREE.Scene;
   private readonly camera: THREE.PerspectiveCamera;
   private readonly controls: OrbitControls;
+  private readonly spaceBackdrop: SpaceBackdropAssembly;
   private readonly boxAssembly: ContainmentBoxAssembly;
   private readonly appleMesh: RealisticAppleAssembly;
   private readonly envRT: THREE.WebGLRenderTarget;
+  private readonly atomHaloTex: THREE.CanvasTexture;
 
   private particleMesh!: THREE.InstancedMesh;
   private particleGeo!: THREE.SphereGeometry;
   private particleMat!: THREE.MeshStandardMaterial;
+
+  private atomHalos!: THREE.Points;
+  private haloPositions!: Float32Array;
+  private haloColors!: Float32Array;
+  private haloGeo!: THREE.BufferGeometry;
+  private haloMat!: THREE.PointsMaterial;
 
   private vectorLines!: THREE.LineSegments;
   private vectorPositions!: Float32Array;
@@ -101,11 +131,13 @@ export class AppleBoxSceneController {
     this.onTelemetry = onTelemetry;
     this.onContextLost = onContextLost;
 
+    // 1,100 ultra-fine fundamental particles, slow 0.5x observation of all 6 Apple-in-a-Box stages
     this.engine = new AppleBoxEngine({
-      particleCount: 680,
+      particleCount: 1100,
       boxSize: 6.0,
       temperatureK: 310,
-      stage: 'solid', // Starts peacefully on the fresh realistic glossy 3D apple!
+      stage: 'full_cycle',
+      timeScale: 0.5,
     });
     this.isSoftwareGl = detectSoftwareWebGL();
 
@@ -118,7 +150,7 @@ export class AppleBoxSceneController {
     });
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.05;
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.setPixelRatio(this.isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     this.renderer.setSize(width, height);
     this.renderer.shadowMap.enabled = !this.isSoftwareGl;
@@ -130,42 +162,39 @@ export class AppleBoxSceneController {
     this.renderer.domElement.setAttribute('data-testid', 'apple-box-canvas');
     container.appendChild(this.renderer.domElement);
 
-    // Clean clinical light studio laboratory backdrop matching reference images (#F4F7FB)
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0xf4f7fb);
+    this.scene.background = new THREE.Color(0x010308);
 
-    // Studio RoomEnvironment for glossy apple clearcoat & metallic chamber highlights
     const pmrem = new THREE.PMREMGenerator(this.renderer);
     const roomEnv = new RoomEnvironment();
     this.envRT = pmrem.fromScene(roomEnv, 0.04);
     this.scene.environment = this.envRT.texture;
+    this.scene.environmentIntensity = 0.42;
     roomEnv.dispose();
     pmrem.dispose();
 
-    // Camera & OrbitControls
-    this.camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 100);
+    this.camera = new THREE.PerspectiveCamera(36, width / height, 0.1, 140);
     const initialPreset = CAMERA_PRESETS.isometric;
     this.camera.position.set(...initialPreset.pos);
 
     this.controls = new OrbitControls(this.camera, this.renderer.domElement);
     this.controls.target.set(...initialPreset.target);
     this.controls.enableDamping = !this.isSoftwareGl;
-    this.controls.dampingFactor = 0.07;
+    this.controls.dampingFactor = 0.06;
     this.controls.minDistance = 2.6;
-    this.controls.maxDistance = 20;
-    this.controls.maxPolarAngle = Math.PI * 0.56;
+    this.controls.maxDistance = 22;
     this.controls.update();
 
     this.controls.addEventListener('start', () => {
       this.transitioningCamera = false;
     });
 
-    // Balanced Light Studio 3-Point Rig (Warm Key + Cool Fill + Soft Rim)
-    const hemiLight = new THREE.HemisphereLight(0xf8fbff, 0xcbd5e1, 0.95);
+    // Cinema Space-Studio 3-Point Lighting focused on the floor-resting apple & sealed glass cube
+    const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0x161925, 0.72);
     this.scene.add(hemiLight);
 
-    const keyLight = new THREE.DirectionalLight(0xfff7ed, 2.05);
-    keyLight.position.set(7.5, 11.5, 8.5);
+    const keyLight = new THREE.DirectionalLight(0xfff4e6, 2.5);
+    keyLight.position.set(5.2, 9.6, 8.0);
     if (!this.isSoftwareGl) {
       keyLight.castShadow = true;
       keyLight.shadow.mapSize.set(1024, 1024);
@@ -181,32 +210,40 @@ export class AppleBoxSceneController {
     }
     this.scene.add(keyLight);
 
-    const rimLight = new THREE.DirectionalLight(0xdbeafe, 0.9);
-    rimLight.position.set(-8, 5, -7);
+    const rimLight = new THREE.DirectionalLight(0x93c5fd, 1.35);
+    rimLight.position.set(-7.5, 4.5, -7.5);
     this.scene.add(rimLight);
 
-    const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+    const fillLight = new THREE.PointLight(0xffd6b3, 1.1, 16);
+    fillLight.position.set(2.4, -0.8, 4.2);
+    this.scene.add(fillLight);
 
-    // 1. Sealed Laboratory Containment Chamber + Frosted Pedestal
+    const maxAniso = this.renderer.capabilities.getMaxAnisotropy();
+    this.atomHaloTex = createAtomHaloTexture();
+
+    // 1. Deep Outer Space Nebula + Crisp Pinpoint Starfields
+    this.spaceBackdrop = buildSpaceBackdrop();
+    this.scene.add(this.spaceBackdrop.group);
+
+    // 2. Sealed Indestructible Space Box with Brushed-Slate Floor
     this.boxAssembly = buildContainmentBox(
       this.engine.params.boxSize,
-      this.engine.appleCenterY,
-      this.engine.appleScale,
       this.isSoftwareGl,
       maxAniso
     );
     this.scene.add(this.boxAssembly.group);
 
-    // 2. Photorealistic Sculpted 3D Striped Apple Shell (morphs cleanly into microscopic atoms)
+    // 3. Floor-Grounded Photorealistic Deforming Apple + Mold + Wet Puddle + Dust Mound
     this.appleMesh = buildRealisticAppleMesh(
       this.engine.appleScale,
       this.engine.appleCenterY,
+      this.engine.params.boxSize,
       this.isSoftwareGl,
       maxAniso
     );
     this.scene.add(this.appleMesh.group);
 
-    // 3. Microscopic Volumetric Multi-Tissue Atom InstancedMesh + Velocity Vectors
+    // 4. 1,100 Fundamental Subatomic Particles (Protons, Neutrons, Electrons, Photons)
     this.rebuildParticleMeshes();
     this.syncVisuals();
 
@@ -237,6 +274,11 @@ export class AppleBoxSceneController {
       this.particleGeo.dispose();
       this.particleMat.dispose();
     }
+    if (this.atomHalos) {
+      this.scene.remove(this.atomHalos);
+      this.haloGeo.dispose();
+      this.haloMat.dispose();
+    }
     if (this.vectorLines) {
       this.scene.remove(this.vectorLines);
       this.vectorGeo.dispose();
@@ -244,19 +286,19 @@ export class AppleBoxSceneController {
     }
 
     const count = this.engine.count;
-    // Fine microscopic sphere geometry for molecular atoms
-    this.particleGeo = new THREE.SphereGeometry(1, 10, 8);
+
+    this.particleGeo = new THREE.SphereGeometry(1, 8, 6);
     this.particleMat = new THREE.MeshStandardMaterial({
       color: 0xffffff,
-      roughness: 0.3,
-      metalness: 0.05,
+      roughness: 0.24,
+      metalness: 0.14,
+      emissive: 0x1e293b,
+      emissiveIntensity: 0.32,
     });
 
     this.particleMesh = new THREE.InstancedMesh(this.particleGeo, this.particleMat, count);
     this.particleMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     this.particleMesh.frustumCulled = false;
-    this.particleMesh.castShadow = !this.isSoftwareGl;
-    this.particleMesh.receiveShadow = !this.isSoftwareGl;
     this.particleMesh.renderOrder = 2;
 
     for (let i = 0; i < count; i++) {
@@ -273,7 +315,33 @@ export class AppleBoxSceneController {
     }
     this.scene.add(this.particleMesh);
 
-    // Per-atom velocity vector tails (matching reference gas visualization!)
+    // Soft glowing quantum halo sprites (strong for protons/electrons/photons, muted for matte dust!)
+    this.haloPositions = new Float32Array(count * 3);
+    this.haloColors = new Float32Array(count * 3);
+    this.haloGeo = new THREE.BufferGeometry();
+    const hPosAttr = new THREE.BufferAttribute(this.haloPositions, 3);
+    const hColAttr = new THREE.BufferAttribute(this.haloColors, 3);
+    hPosAttr.setUsage(THREE.DynamicDrawUsage);
+    hColAttr.setUsage(THREE.DynamicDrawUsage);
+    this.haloGeo.setAttribute('position', hPosAttr);
+    this.haloGeo.setAttribute('color', hColAttr);
+
+    this.haloMat = new THREE.PointsMaterial({
+      size: 0.15,
+      map: this.atomHaloTex,
+      vertexColors: true,
+      transparent: true,
+      opacity: 0.72,
+      depthWrite: false,
+      blending: THREE.AdditiveBlending,
+      sizeAttenuation: true,
+    });
+    this.atomHalos = new THREE.Points(this.haloGeo, this.haloMat);
+    this.atomHalos.frustumCulled = false;
+    this.atomHalos.renderOrder = 3;
+    this.scene.add(this.atomHalos);
+
+    // Delicate momentum / photon light trails
     this.vectorPositions = new Float32Array(count * 6);
     this.vectorColors = new Float32Array(count * 6);
     this.vectorGeo = new THREE.BufferGeometry();
@@ -287,8 +355,9 @@ export class AppleBoxSceneController {
     this.vectorMat = new THREE.LineBasicMaterial({
       vertexColors: true,
       transparent: true,
-      opacity: 0.65,
+      opacity: 0.45,
       depthWrite: false,
+      blending: THREE.AdditiveBlending,
     });
     this.vectorLines = new THREE.LineSegments(this.vectorGeo, this.vectorMat);
     this.vectorLines.frustumCulled = false;
@@ -301,36 +370,38 @@ export class AppleBoxSceneController {
     const pos = this.engine.pos;
     const vel = this.engine.vel;
     const baseColor = this.engine.baseColor;
+    const dustColor = this.engine.dustColor;
     const gasColor = this.engine.gasColor;
+    const species = this.engine.species;
     const radius = this.engine.particleRadius;
     const solidAlpha = this.engine.solidShellAlpha;
     const decay = this.engine.decayProgress;
+    const puddle = this.engine.puddleProgress;
+    const dust = this.engine.dustProgress;
     const coreView = this.visualState.coreView;
 
-    // 1. Update Photorealistic Glossy 3D Apple Shell (solid, decaying/slumping, or X-ray Core View)
-    this.appleMesh.setAppearance(solidAlpha, decay, coreView);
-    if (decay < 0.05 && solidAlpha > 0.8) {
-      const breathe = 1.0 + Math.sin(this.engine.simTime * 2.8) * 0.0025;
-      this.appleMesh.group.scale.setScalar(breathe);
-    }
+    // 1. Update Floor-Resting Photorealistic Apple + Mold/Rot + Wet Puddle + Dust Mound
+    this.appleMesh.setAppearance(solidAlpha, decay, puddle, dust, coreView);
 
-    // Show tiny microscopic atoms whenever apple begins decaying, in Core View, or in Gas/Reversal
-    const showAtoms = coreView || solidAlpha < 0.96 || decay > 0.04;
+    const isQuantumSoup = !coreView && decay > 0.9 && puddle < 0.08 && dust < 0.15 && solidAlpha < 0.1;
+    const isDustStage = !coreView && dust >= 0.15;
+    const isDecayStage = !coreView && decay > 0.06 && !isDustStage && !isQuantumSoup;
+
+    // Show particles whenever in Core View, Decay (volatile vapors), Dust, Quantum Soup, or Reversal
+    const showAtoms = coreView || solidAlpha < 0.92 || decay > 0.08 || dust > 0.05 || this.engine.isReversed;
     this.particleMesh.visible = showAtoms;
+    // Halos glow strongly in Quantum Soup / Reversal / Core View, muted in matte organic dust/decay
+    this.atomHalos.visible = showAtoms && (isQuantumSoup || this.engine.isReversed || coreView);
 
-    // Show crisp velocity vector arrows during gas / reversal / vigorous decay motion
     const showVectors =
-      this.visualState.showVelocityVectors && showAtoms && (solidAlpha < 0.55 || decay > 0.35);
+      this.visualState.showVelocityVectors &&
+      showAtoms &&
+      (isQuantumSoup || this.engine.isReversed || (isDustStage && dust > 0.55));
     this.vectorLines.visible = showVectors;
 
     if (showAtoms) {
-      // Blend atom appearance smoothly:
-      // Solid/Core View -> anatomical tissue colors (crimson skin, cream flesh, dark seeds)
-      // Decay -> enzymatic oxidation brown
-      // Ergodic Gas -> crisp amber-orange & ice-cyan molecular species (matching reference!)
-      const isGasLike = decay > 0.78 && !coreView;
-      const gasMix = isGasLike ? Math.min(1, (decay - 0.78) / 0.22) : 0;
-      const oxMix = !isGasLike ? Math.min(0.8, decay * 0.85) : 0;
+      this.haloMat.opacity = this.engine.isReversed ? 0.92 : isQuantumSoup ? 0.86 : 0.62;
+      this.haloMat.size = isQuantumSoup || this.engine.isReversed ? 0.16 : 0.11;
 
       for (let i = 0; i < count; i++) {
         const i3 = i * 3;
@@ -338,29 +409,76 @@ export class AppleBoxSceneController {
         const y = pos[i3 + 1];
         const z = pos[i3 + 2];
 
+        // During early Decay & Puddle (while solid apple still sits on floor), show primarily
+        // the rising volatile decomposition vapor & detached specks so the rotting apple stays clear!
+        let r = radius;
+        if (isDecayStage && solidAlpha > 0.25 && i % 4 !== 0) {
+          r = 0; // Hide bulk interior atoms inside the opaque rotting apple shell
+        } else if (isQuantumSoup) {
+          // Differentiate species radii: protons/neutrons slightly crisper, electrons & photons ultra-fine
+          const sp = species[i];
+          r =
+            sp === SPECIES_ID.proton || sp === SPECIES_ID.neutron
+              ? radius * 1.1
+              : sp === SPECIES_ID.electron
+                ? radius * 0.78
+                : radius * 0.68;
+        } else if (isDustStage) {
+          r = radius * 0.85;
+        }
+
         _pos.set(x, y, z);
-        // Tiny microscopic atom spheres!
-        const r = radius * (isGasLike ? 1.1 : 0.96);
         _scale.set(r, r, r);
         _mat4.compose(_pos, _quat, _scale);
         this.particleMesh.setMatrixAt(i, _mat4);
 
-        _color.setRGB(baseColor[i3], baseColor[i3 + 1], baseColor[i3 + 2], THREE.SRGBColorSpace);
-        if (oxMix > 0.01) {
-          _color.lerp(_rotColor, oxMix);
+        if (isQuantumSoup) {
+          // Authentic fundamental subatomic soup colors: Protons, Neutrons, Electrons, Photons!
+          _color.setRGB(gasColor[i3], gasColor[i3 + 1], gasColor[i3 + 2], THREE.SRGBColorSpace);
+        } else if (isDustStage) {
+          // Matte powdery ash & organic dust grains transitioning gradually into subatomic hues
+          _color.setRGB(dustColor[i3], dustColor[i3 + 1], dustColor[i3 + 2], THREE.SRGBColorSpace);
+        } else {
+          // Anatomical tissue or rising pale volatile decay gas
+          _color.setRGB(baseColor[i3], baseColor[i3 + 1], baseColor[i3 + 2], THREE.SRGBColorSpace);
+          if (isDecayStage) {
+            if (i % 5 === 0) {
+              // Subtle misty olive-beige decomposition gas (CO2 / CH4 vapor)
+              _targetColor.setRGB(0.66, 0.72, 0.62, THREE.SRGBColorSpace);
+              _color.lerp(_targetColor, 0.78);
+            } else {
+              _color.lerp(_rotColor, Math.min(0.85, decay));
+            }
+          }
         }
-        if (gasMix > 0.01) {
-          _gasColor.setRGB(gasColor[i3], gasColor[i3 + 1], gasColor[i3 + 2], THREE.SRGBColorSpace);
-          _color.lerp(_gasColor, gasMix);
+
+        if (this.engine.isReversed) {
+          _targetColor.setRGB(0.38, 0.86, 1.0, THREE.SRGBColorSpace);
+          _color.lerp(_targetColor, 0.34);
         }
         this.particleMesh.setColorAt(i, _color);
+
+        if (this.atomHalos.visible) {
+          this.haloPositions[i3] = x;
+          this.haloPositions[i3 + 1] = y;
+          this.haloPositions[i3 + 2] = z;
+          // Photons & electrons radiate extra quantum halo luminescence
+          const sp = species[i];
+          const boost =
+            isQuantumSoup && (sp === SPECIES_ID.photon || sp === SPECIES_ID.electron) ? 1.15 : 0.72;
+          this.haloColors[i3] = Math.min(1, _color.r * boost);
+          this.haloColors[i3 + 1] = Math.min(1, _color.g * boost);
+          this.haloColors[i3 + 2] = Math.min(1, _color.b * boost);
+        }
 
         if (showVectors) {
           const i6 = i * 6;
           const vx = vel[i3];
           const vy = vel[i3 + 1];
           const vz = vel[i3 + 2];
-          const tailScale = 0.042;
+          // Photons leave slightly longer luminous light streaks!
+          const tailScale =
+            isQuantumSoup && species[i] === SPECIES_ID.photon ? 0.068 : 0.032;
           this.vectorPositions[i6] = x;
           this.vectorPositions[i6 + 1] = y;
           this.vectorPositions[i6 + 2] = z;
@@ -368,16 +486,15 @@ export class AppleBoxSceneController {
           this.vectorPositions[i6 + 4] = y + vy * tailScale;
           this.vectorPositions[i6 + 5] = z + vz * tailScale;
 
-          // Match vector stroke color to atom color (or cool cyan during time-reversal)
-          const cr = this.engine.isReversed ? 0.14 : _color.r;
-          const cg = this.engine.isReversed ? 0.65 : _color.g;
-          const cb = this.engine.isReversed ? 0.95 : _color.b;
+          const cr = this.engine.isReversed ? 0.32 : _color.r;
+          const cg = this.engine.isReversed ? 0.82 : _color.g;
+          const cb = this.engine.isReversed ? 1.0 : _color.b;
           this.vectorColors[i6] = cr;
           this.vectorColors[i6 + 1] = cg;
           this.vectorColors[i6 + 2] = cb;
-          this.vectorColors[i6 + 3] = cr;
-          this.vectorColors[i6 + 4] = cg;
-          this.vectorColors[i6 + 5] = cb;
+          this.vectorColors[i6 + 3] = cr * 0.2;
+          this.vectorColors[i6 + 4] = cg * 0.2;
+          this.vectorColors[i6 + 5] = cb * 0.2;
         }
       }
 
@@ -386,17 +503,21 @@ export class AppleBoxSceneController {
         this.particleMesh.instanceColor.needsUpdate = true;
       }
 
+      if (this.atomHalos.visible) {
+        (this.haloGeo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
+        (this.haloGeo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
+      }
+
       if (showVectors) {
         (this.vectorGeo.attributes.position as THREE.BufferAttribute).needsUpdate = true;
         (this.vectorGeo.attributes.color as THREE.BufferAttribute).needsUpdate = true;
       }
     }
 
-    // Subtle wall elastic bounce shimmer
     for (const face of WALL_FACES) {
       const mat = this.boxAssembly.wallFlashMeshes[face].material as THREE.MeshBasicMaterial;
-      mat.opacity = this.engine.wallImpacts[face] * 0.08;
-      mat.color.setHex(this.engine.isReversed ? 0x06b6d4 : 0x3b82f6);
+      mat.opacity = this.engine.wallImpacts[face] * 0.14;
+      mat.color.setHex(this.engine.isReversed ? 0x22d3ee : 0x60a5fa);
     }
   }
 
@@ -441,6 +562,7 @@ export class AppleBoxSceneController {
 
     if (!this.paused) {
       this.engine.advance(rawDt);
+      this.spaceBackdrop.update(rawDt);
       this.syncVisuals();
     }
 
@@ -475,8 +597,6 @@ export class AppleBoxSceneController {
 
     this.scheduleNextFrame();
   };
-
-  // --- Imperative Public API ---
 
   public setPaused(paused: boolean): void {
     this.paused = paused;
@@ -514,7 +634,7 @@ export class AppleBoxSceneController {
   public reset(): void {
     this.paused = false;
     this.engine.reset(this.engine.params.particleCount);
-    this.engine.params.stage = 'solid';
+    this.engine.params.stage = 'full_cycle';
     this.syncVisuals();
     this.onTelemetry(this.engine.getTelemetry());
   }
@@ -549,10 +669,14 @@ export class AppleBoxSceneController {
     this.renderer.domElement.removeEventListener('webglcontextrestored', this.handleContextRestoredBound);
 
     this.controls.dispose();
+    this.spaceBackdrop.dispose();
     this.boxAssembly.dispose();
     this.appleMesh.dispose();
     this.particleGeo.dispose();
     this.particleMat.dispose();
+    this.haloGeo.dispose();
+    this.haloMat.dispose();
+    this.atomHaloTex.dispose();
     this.vectorGeo.dispose();
     this.vectorMat.dispose();
     this.envRT.dispose();

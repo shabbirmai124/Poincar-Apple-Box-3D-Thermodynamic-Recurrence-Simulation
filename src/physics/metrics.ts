@@ -3,92 +3,84 @@ import { MacroPhase } from './types';
 export interface EntropyResult {
   entropy: number;
   maxEntropy: number;
-  pct: number; // 0..100% normalized between compact apple baseline and ergodic max-entropy gas
+  pct: number; // 0..100%
 }
 
-const VOXEL_GRID_RES = 8; // 8 x 8 x 8 = 512 spatial microstate bins
+const VOXEL_RES = 8; // 8x8x8 = 512 spatial microstate cells
+const TOTAL_BINS = VOXEL_RES * VOXEL_RES * VOXEL_RES;
+const binCounts = new Int32Array(TOTAL_BINS);
 
 /**
- * Computes Spatial Shannon / Boltzmann Entropy across an 8x8x8 = 512 voxel partition
- * of the sealed containment chamber:
- *   S = -sum_{p_i > 0} p_i * ln(p_i)
+ * Computes Spatial Shannon / Boltzmann Entropy S = -sum(p_k * ln(p_k)) across an 8x8x8 voxel grid.
  */
 export function computeShannonEntropy(
   positions: Float64Array,
   count: number,
   boxSize: number,
-  baselineEntropy?: number
+  baselineEntropy = 0
 ): EntropyResult {
-  const totalCells = VOXEL_GRID_RES * VOXEL_GRID_RES * VOXEL_GRID_RES;
-  // Theoretical max occupancy entropy for N particles in 512 bins (finite-N Stirling correction)
-  const expectedOccupied = totalCells * (1 - Math.exp(-count / totalCells));
-  const maxEntropy = Math.log(Math.max(2, Math.min(totalCells, expectedOccupied * 1.16)));
-
-  if (count <= 1) {
-    return { entropy: 0, maxEntropy: 1, pct: 0 };
-  }
-
-  const counts = new Int32Array(totalCells);
+  binCounts.fill(0);
   const half = boxSize * 0.5;
-  const invSize = VOXEL_GRID_RES / boxSize;
+  const invSize = 1 / boxSize;
 
   for (let i = 0; i < count; i++) {
-    const cx = Math.min(
-      VOXEL_GRID_RES - 1,
-      Math.max(0, Math.floor((positions[i * 3] + half) * invSize))
-    );
-    const cy = Math.min(
-      VOXEL_GRID_RES - 1,
-      Math.max(0, Math.floor((positions[i * 3 + 1] + half) * invSize))
-    );
-    const cz = Math.min(
-      VOXEL_GRID_RES - 1,
-      Math.max(0, Math.floor((positions[i * 3 + 2] + half) * invSize))
-    );
-    counts[(cx * VOXEL_GRID_RES + cy) * VOXEL_GRID_RES + cz]++;
+    const x = positions[i * 3];
+    const y = positions[i * 3 + 1];
+    const z = positions[i * 3 + 2];
+
+    const gx = Math.min(VOXEL_RES - 1, Math.max(0, Math.floor((x + half) * invSize * VOXEL_RES)));
+    const gy = Math.min(VOXEL_RES - 1, Math.max(0, Math.floor((y + half) * invSize * VOXEL_RES)));
+    const gz = Math.min(VOXEL_RES - 1, Math.max(0, Math.floor((z + half) * invSize * VOXEL_RES)));
+
+    binCounts[(gx * VOXEL_RES + gy) * VOXEL_RES + gz]++;
   }
 
-  let entropy = 0;
-  const invN = 1 / count;
-  for (let c = 0; c < totalCells; c++) {
-    const n = counts[c];
-    if (n > 0) {
-      const p = n * invN;
-      entropy -= p * Math.log(p);
+  let s = 0;
+  const invN = 1 / Math.max(1, count);
+  for (let b = 0; b < TOTAL_BINS; b++) {
+    const c = binCounts[b];
+    if (c > 0) {
+      const p = c * invN;
+      s -= p * Math.log(p);
     }
   }
 
-  const floorS = baselineEntropy !== undefined ? baselineEntropy * 0.96 : 0;
-  const span = Math.max(0.5, maxEntropy - floorS);
-  const rawRatio = (entropy - floorS) / span;
-  const pct = Math.max(2.0, Math.min(100.0, rawRatio * 100));
+  const maxUniform = Math.log(Math.min(TOTAL_BINS, Math.max(2, count))) * 0.93;
+  const floorS = Math.min(baselineEntropy * 0.96, maxUniform * 0.72);
+  const denom = Math.max(1e-4, maxUniform - floorS);
+  const rawPct = ((s - floorS) / denom) * 100;
+  const pct = Math.max(0, Math.min(100, rawPct));
 
-  return { entropy, maxEntropy, pct };
+  return {
+    entropy: s,
+    maxEntropy: maxUniform,
+    pct,
+  };
 }
 
 /**
- * Computes Root-Mean-Square Deviation (nm) from initial exact apple coordinates r_i(0).
+ * Computes Structural Root-Mean-Square Deviation (RMSD, in nm) relative to the fresh apple state.
  */
 export function computeRMSD(
   positions: Float64Array,
   initPositions: Float64Array,
   count: number
 ): number {
-  if (count === 0) return 0;
   let sumSq = 0;
-  for (let i = 0; i < count; i++) {
-    const i3 = i * 3;
-    const dx = positions[i3] - initPositions[i3];
-    const dy = positions[i3 + 1] - initPositions[i3 + 1];
-    const dz = positions[i3 + 2] - initPositions[i3 + 2];
-    sumSq += dx * dx + dy * dy + dz * dz;
+  const len = count * 3;
+  for (let i = 0; i < len; i++) {
+    const d = positions[i] - initPositions[i];
+    sumSq += d * d;
   }
-  return Math.sqrt(sumSq / count);
+  return Math.sqrt(sumSq / Math.max(1, count));
 }
 
-/**
- * Computes total simulation kinetic energy K = sum(0.5 * m_i * |v_i|^2).
- */
+export function computeRecombinationPct(rmsdNm: number, boxSize: number): number {
+  const maxRefRmsd = boxSize * 0.56;
+  const norm = Math.max(0, Math.min(1, 1 - rmsdNm / maxRefRmsd));
+  return norm * 100;
+}
+
 export function computeRawKineticEnergy(
   velocities: Float64Array,
   masses: Float64Array,
@@ -96,67 +88,85 @@ export function computeRawKineticEnergy(
 ): number {
   let k = 0;
   for (let i = 0; i < count; i++) {
-    const i3 = i * 3;
-    const vx = velocities[i3];
-    const vy = velocities[i3 + 1];
-    const vz = velocities[i3 + 2];
+    const vx = velocities[i * 3];
+    const vy = velocities[i * 3 + 1];
+    const vz = velocities[i * 3 + 2];
     k += 0.5 * masses[i] * (vx * vx + vy * vy + vz * vz);
   }
   return k;
 }
 
+export function scaleKineticEnergyKj(
+  rawKinetic: number,
+  count: number,
+  temperatureK: number
+): number {
+  const perParticle = rawKinetic / Math.max(1, count);
+  const thermalFloor = (temperatureK / 310) * 11.8;
+  return thermalFloor + perParticle * 0.42;
+}
+
 /**
- * Maps internal simulation kinetic energy to physically scaled molar kinetic energy (kJ/mol)
- * calibrated around 310 K physiological/room chamber temperature (~12.4 kJ/mol solid -> ~19.2 kJ/mol gas).
+ * Maps macroscopic thermodynamic phase & cycle progress to authentic Apple-in-a-Box theory labels,
+ * cosmic timescales, and concise physical captions.
  */
-export function scaleKineticEnergyKj(rawK: number, count: number, temperatureK: number): number {
-  if (count === 0) return 0;
-  const meanKPerParticle = rawK / count;
-  // Base thermal floor proportional to T_K plus live kinetic energy contribution from Verlet speeds
-  const thermalBase = (temperatureK / 310) * 11.9;
-  const dynamicTerm = meanKPerParticle * 0.42;
-  return thermalBase + dynamicTerm;
-}
-
-export function computeRecombinationPct(rmsdNm: number, boxSize: number): number {
-  const maxRef = boxSize * 0.52;
-  const normalized = Math.max(0, Math.min(1, 1 - rmsdNm / maxRef));
-  return Math.pow(normalized, 1.25) * 100;
-}
-
 export function getPhaseCaptions(
   phase: MacroPhase,
   cycleProgress: number,
   rmsdNm: number
-): { stageLabel: string; timescaleLabel: string } {
-  switch (phase) {
-    case 'fresh':
-      return {
-        stageLabel: 'Cohesive Solid Apple',
-        timescaleLabel: 't = 0 s',
-      };
-    case 'decay':
-      return {
-        stageLabel: 'Enzymatic Decay & Slump',
-        timescaleLabel: cycleProgress < 0.22 ? 't ≈ 3.4 yr' : 't ≈ 10² yr',
-      };
-    case 'equilibrium': {
-      // Scale illustrative astronomical exponent smoothly across ergodic phase
-      const exp = Math.min(54, Math.max(12, Math.round(14 + (cycleProgress - 0.3) * 95)));
-      return {
-        stageLabel: 'Ergodic Max-Entropy Gas',
-        timescaleLabel: `10^(10^${exp}) yr`,
-      };
-    }
-    case 'reversing':
-      return {
-        stageLabel: 'Loschmidt Recurrence Path',
-        timescaleLabel: rmsdNm < 0.6 ? 't → T_rec' : '10^(10^52) yr',
-      };
-    case 'recombined':
-      return {
-        stageLabel: 'Poincaré Recurrence Achieved',
-        timescaleLabel: 't = T_rec',
-      };
+): { stageLabel: string; timescaleLabel: string; stageCaption: string } {
+  if (phase === 'recombined') {
+    return {
+      stageLabel: 'Poincaré Recurrence Achieved',
+      timescaleLabel: 't = T_rec',
+      stageCaption:
+        'After cycling through astronomical microstates, the exact starting apple spontaneously reassembles.',
+    };
   }
+  if (phase === 'reversing') {
+    return {
+      stageLabel: 'Spontaneous Recombination',
+      timescaleLabel: rmsdNm < 0.7 ? 't → T_rec' : '10^(10^50) yr',
+      stageCaption:
+        'Finite phase-space trajectories converge back together, condensing dust and energy into living fruit.',
+    };
+  }
+  if (phase === 'rearranging') {
+    return {
+      stageLabel: 'Infinite Random Rearrangement',
+      timescaleLabel: '10^(10^48) yr',
+      stageCaption:
+        'Zero atoms ever escape the sealed box; endless collisions explore every possible arrangement of matter.',
+    };
+  }
+  if (phase === 'equilibrium') {
+    return {
+      stageLabel: 'Thermal Equilibrium (Subatomic Soup)',
+      timescaleLabel: cycleProgress > 0.48 ? '10^36 yr' : '10^14 yr',
+      stageCaption:
+        'Matter breaks down into protons, neutrons, electrons, and photons bouncing elastically at max entropy.',
+    };
+  }
+  if (phase === 'dust') {
+    return {
+      stageLabel: 'Dehydration & Dust Collapse',
+      timescaleLabel: '10^2 – 10^4 yr',
+      stageCaption:
+        'Organic moisture evaporates and the shriveled husk crumbles into a fine dust mound & drifting gas.',
+    };
+  }
+  if (phase === 'decay') {
+    return {
+      stageLabel: 'Decay, Mold & Puddle',
+      timescaleLabel: 'Weeks – Years',
+      stageCaption:
+        'Bacteria and mold digest the apple, wrinkling the skin and collapsing it into a dark viscous puddle.',
+    };
+  }
+  return {
+    stageLabel: 'Fresh Apple in Sealed Box',
+    timescaleLabel: 't = 0 s',
+    stageCaption:
+      'A fresh apple rests inside an indestructible, perfectly isolated chamber allowing zero matter or energy out.',
+  };
 }

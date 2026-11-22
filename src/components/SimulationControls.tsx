@@ -19,9 +19,10 @@ interface SimulationControlsProps {
 }
 
 const QUICK_STAGES: Array<{ id: ThermodynamicStage; label: string }> = [
-  { id: 'solid', label: '1. Fresh Apple' },
-  { id: 'decay', label: '2. Decay & Slump' },
-  { id: 'gas', label: '3. Thermal Gas' },
+  { id: 'solid', label: '1. Fresh' },
+  { id: 'decay', label: '2. Mold & Puddle' },
+  { id: 'dust', label: '3. Dust' },
+  { id: 'gas', label: '4. Quantum Soup' },
   { id: 'full_cycle', label: 'Full Cycle' },
 ];
 
@@ -42,20 +43,20 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
 }) => {
   const cyclePct = Math.round(cycleProgress * 100);
   const tempDisplay = Math.round(temperatureK);
+  const tempPct = ((tempDisplay - 50) / 750) * 100;
 
   return (
-    <div className="space-y-3.5">
-      {/* Row 1: Two primary thermodynamic sliders matching reference layout */}
+    <div className="space-y-3">
+      {/* Row 1: Poincaré phase cycle & Chamber temperature sliders */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 md:gap-8">
-        {/* Poincaré Phase Cycle Scrubber */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between">
-            <label
-              htmlFor="cycle-scrubber"
-              className="text-sm font-medium text-slate-700"
-            >
+            <label htmlFor="cycle-scrubber" className="text-xs font-medium text-slate-300">
               Poincaré phase cycle
             </label>
+            <span className="text-[11px] text-slate-500">
+              Apple → Mold &amp; Puddle → Dust → Quantum Soup → Reassembly
+            </span>
           </div>
           <div className="flex items-center gap-3">
             <input
@@ -68,11 +69,11 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
               onChange={(e) => onSeekCycle(Number(e.target.value) / 100)}
               className="studio-slider flex-1"
               style={{
-                background: `linear-gradient(to right, #2563EB ${cyclePct}%, #E2E8F0 ${cyclePct}%)`,
+                background: `linear-gradient(to right, #38BDF8 ${cyclePct}%, #1E293B ${cyclePct}%)`,
               }}
             />
             <span
-              className="w-12 text-right text-sm font-semibold text-slate-900 font-mono-tabular shrink-0"
+              className="w-11 text-right text-sm font-semibold text-slate-100 font-mono-tabular shrink-0"
               data-testid="cycle-pct-value"
             >
               {cyclePct}%
@@ -80,16 +81,10 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
           </div>
         </div>
 
-        {/* Chamber Temperature Slider */}
         <div className="space-y-1.5">
-          <div className="flex items-center justify-between">
-            <label
-              htmlFor="chamber-temp-slider"
-              className="text-sm font-medium text-slate-700"
-            >
-              Chamber temperature
-            </label>
-          </div>
+          <label htmlFor="chamber-temp-slider" className="block text-xs font-medium text-slate-300">
+            Chamber temperature
+          </label>
           <div className="flex items-center gap-3">
             <input
               id="chamber-temp-slider"
@@ -101,11 +96,11 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
               onChange={(e) => onTemperatureChange(Number(e.target.value))}
               className="studio-slider flex-1"
               style={{
-                background: `linear-gradient(to right, #2563EB ${((tempDisplay - 50) / 750) * 100}%, #E2E8F0 ${((tempDisplay - 50) / 750) * 100}%)`,
+                background: `linear-gradient(to right, #38BDF8 ${tempPct}%, #1E293B ${tempPct}%)`,
               }}
             />
             <span
-              className="w-14 text-right text-sm font-semibold text-slate-900 font-mono-tabular shrink-0"
+              className="w-14 text-right text-sm font-semibold text-slate-100 font-mono-tabular shrink-0"
               data-testid="temp-value"
             >
               {tempDisplay} K
@@ -114,12 +109,12 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
         </div>
       </div>
 
-      {/* Row 2: Thermodynamic Stage selector + Direct Phase Controls */}
-      <div className="flex flex-col lg:flex-row lg:items-end justify-between gap-3 pt-0.5">
-        <div className="flex-1 min-w-[220px] max-w-md space-y-1.5">
+      {/* Row 2: Stage dropdown + Direct 6-stage theory buttons + Speed */}
+      <div className="flex flex-wrap items-end justify-between gap-2 pt-0.5">
+        <div className="w-full sm:w-48 shrink-0 space-y-1">
           <label
             htmlFor="thermodynamic-stage-select"
-            className="block text-sm font-medium text-slate-700"
+            className="block text-xs font-medium text-slate-300"
           >
             Thermodynamic stage
           </label>
@@ -127,19 +122,19 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
             id="thermodynamic-stage-select"
             value={stage}
             onChange={(e) => onStageChange(e.target.value as ThermodynamicStage)}
-            className="w-full h-10 rounded-lg border border-slate-200 bg-slate-50/70 px-3 text-sm font-medium text-slate-900 hover:border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-600/30 focus:border-blue-600 transition-colors cursor-pointer"
+            className="w-full h-9 rounded-lg border border-slate-700/90 bg-[#0B1120] px-2.5 text-xs font-medium text-slate-100 hover:border-slate-600 focus:outline-none focus:ring-2 focus:ring-sky-500/40 focus:border-sky-400 transition-colors cursor-pointer"
           >
-            <option value="full_cycle">Full cycle</option>
-            <option value="solid">1. Cohesive Solid Apple</option>
-            <option value="decay">2. Enzymatic Decay &amp; Slump</option>
-            <option value="gas">3. Ergodic Max-Entropy Gas</option>
-            <option value="reversal">4. Loschmidt Time-Reversal (v → −v)</option>
+            <option value="full_cycle">Full cycle (Slow)</option>
+            <option value="solid">1. Fresh Apple</option>
+            <option value="decay">2. Mold &amp; Puddle</option>
+            <option value="dust">3. Dust Collapse</option>
+            <option value="gas">4. Subatomic Soup</option>
+            <option value="reversal">5. Reassembly (v → −v)</option>
           </select>
         </div>
 
-        {/* Direct 1-click stage buttons + Reverse Time & Reset */}
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="inline-flex flex-wrap items-center gap-1.5" role="group" aria-label="Direct simulation stages">
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="inline-flex flex-wrap items-center gap-1" role="group" aria-label="Direct simulation stages">
             {QUICK_STAGES.map((item) => {
               const active = stage === item.id;
               return (
@@ -148,10 +143,10 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
                   type="button"
                   onClick={() => onStageChange(item.id)}
                   aria-pressed={active}
-                  className={`h-9 px-3 rounded-lg text-xs font-medium border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
+                  className={`h-9 px-2.5 rounded-lg text-xs font-medium border transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
                     active
-                      ? 'bg-blue-600 border-blue-600 text-white'
-                      : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
+                      ? 'bg-sky-500/20 border-sky-400 text-sky-200'
+                      : 'bg-[#0B1120] border-slate-800 text-slate-300 hover:bg-slate-800/70 hover:text-white'
                   }`}
                 >
                   {item.label}
@@ -164,51 +159,51 @@ export const SimulationControls: React.FC<SimulationControlsProps> = ({
             type="button"
             onClick={onReverseVelocities}
             aria-pressed={isReversed}
-            className={`h-9 px-3 rounded-lg text-xs font-medium border inline-flex items-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600 ${
+            className={`h-9 px-2.5 rounded-lg text-xs font-medium border inline-flex items-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400 ${
               isReversed
-                ? 'bg-sky-600 border-sky-600 text-white'
-                : 'bg-white border-slate-200 text-slate-800 hover:bg-slate-50 hover:border-slate-300'
+                ? 'bg-cyan-500/25 border-cyan-400 text-cyan-200'
+                : 'bg-[#0B1120] border-slate-800 text-slate-200 hover:bg-slate-800/70 hover:text-white'
             }`}
           >
             <Rewind className="w-3.5 h-3.5" />
-            <span>4. Reverse (v → −v)</span>
+            <span>5. Reassemble</span>
           </button>
 
           <button
             type="button"
             onClick={onReset}
             aria-label="Reset chamber to fresh apple"
-            className="h-9 px-3 rounded-lg text-xs font-medium border border-slate-200 bg-white text-slate-700 hover:bg-slate-50 hover:border-slate-300 inline-flex items-center gap-1.5 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-600"
+            className="h-9 px-2.5 rounded-lg text-xs font-medium border border-slate-800 bg-[#0B1120] text-slate-300 hover:bg-slate-800/70 hover:text-white inline-flex items-center gap-1 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
           >
             <RotateCcw className="w-3.5 h-3.5" />
             <span>Reset</span>
           </button>
 
-          <label className="h-9 px-2.5 rounded-lg border border-slate-200 bg-white inline-flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer select-none hover:bg-slate-50">
+          <label className="h-9 px-2 rounded-lg border border-slate-800 bg-[#0B1120] inline-flex items-center gap-1.5 text-xs font-medium text-slate-300 cursor-pointer select-none hover:bg-slate-800/70">
             <input
               type="checkbox"
               checked={showVelocityVectors}
               onChange={onToggleVectors}
-              className="accent-blue-600 rounded cursor-pointer"
+              className="accent-sky-400 rounded cursor-pointer"
             />
-            <span>Vectors</span>
+            <span>Trails</span>
           </label>
 
           <div
-            className="inline-flex rounded-lg border border-slate-200 bg-slate-50 p-0.5"
+            className="inline-flex rounded-lg border border-slate-800 bg-[#070B14] p-0.5"
             role="group"
-            aria-label="Simulation speed"
+            aria-label="Observation speed"
           >
-            {[0.5, 1, 2].map((spd) => (
+            {[0.25, 0.5, 1, 2].map((spd) => (
               <button
                 key={spd}
                 type="button"
                 onClick={() => onTimeScaleChange(spd)}
                 aria-pressed={Math.abs(timeScale - spd) < 0.05}
-                className={`h-8 px-2 rounded-md text-xs font-mono-tabular font-medium transition-colors cursor-pointer ${
+                className={`h-8 px-1.5 rounded-md text-[11px] font-mono-tabular font-medium transition-colors cursor-pointer ${
                   Math.abs(timeScale - spd) < 0.05
-                    ? 'bg-white text-slate-900 shadow-xs'
-                    : 'text-slate-600 hover:text-slate-900'
+                    ? 'bg-slate-800 text-sky-300'
+                    : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 {spd}×

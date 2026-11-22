@@ -63,7 +63,6 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ telemetry }) => {
   const energySeries = extractSeries(telemetry.history, (p) => p.kineticEnergyKj);
   const rmsdSeries = extractSeries(telemetry.history, (p) => p.rmsdNm);
 
-  // Dynamic headroom for kinetic energy so elastic gas plateaus read crisp and steady
   const maxEnergy = Math.max(28, telemetry.kineticEnergyKj * 1.45, ...energySeries);
 
   return (
@@ -72,13 +71,13 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ telemetry }) => {
       aria-label="Live statistical mechanics metrics"
     >
       {/* 1. Shannon Entropy */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
+      <div className="bg-[#0B1120] border border-slate-800/90 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-xs font-medium text-slate-600 truncate">
+          <span className="text-xs font-medium text-slate-400 truncate">
             Shannon entropy (S / S_max)
           </span>
           <span
-            className="text-sm font-semibold text-slate-900 font-mono-tabular shrink-0"
+            className="text-sm font-semibold text-slate-100 font-mono-tabular shrink-0"
             data-testid="metric-entropy"
           >
             {telemetry.entropyPct.toFixed(1)}%
@@ -88,19 +87,19 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ telemetry }) => {
           values={entropySeries}
           min={0}
           max={105}
-          stroke="#2563EB"
+          stroke="#38BDF8"
           label={`Shannon entropy trace at ${telemetry.entropyPct.toFixed(1)} percent`}
         />
       </div>
 
       {/* 2. Total Kinetic Energy */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
+      <div className="bg-[#0B1120] border border-slate-800/90 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-xs font-medium text-slate-600 truncate">
+          <span className="text-xs font-medium text-slate-400 truncate">
             Total kinetic energy
           </span>
           <span
-            className="text-sm font-semibold text-slate-900 font-mono-tabular shrink-0"
+            className="text-sm font-semibold text-slate-100 font-mono-tabular shrink-0"
             data-testid="metric-energy"
           >
             {telemetry.kineticEnergyKj.toFixed(1)} kJ/mol
@@ -110,19 +109,19 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ telemetry }) => {
           values={energySeries}
           min={0}
           max={maxEnergy}
-          stroke="#EA580C"
+          stroke="#F97316"
           label={`Total kinetic energy trace at ${telemetry.kineticEnergyKj.toFixed(1)} kilojoules per mole`}
         />
       </div>
 
       {/* 3. Structural RMSD */}
-      <div className="bg-white border border-slate-200 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
+      <div className="bg-[#0B1120] border border-slate-800/90 rounded-xl px-4 py-2.5 flex flex-col justify-between gap-1.5">
         <div className="flex items-baseline justify-between gap-2">
-          <span className="text-xs font-medium text-slate-600 truncate">
+          <span className="text-xs font-medium text-slate-400 truncate">
             Structural RMSD
           </span>
           <span
-            className="text-sm font-semibold text-slate-900 font-mono-tabular shrink-0"
+            className="text-sm font-semibold text-slate-100 font-mono-tabular shrink-0"
             data-testid="metric-rmsd"
           >
             {telemetry.rmsdNm.toFixed(2)} nm
@@ -132,7 +131,7 @@ export const MetricCards: React.FC<MetricCardsProps> = ({ telemetry }) => {
           values={rmsdSeries}
           min={0}
           max={3.6}
-          stroke="#10B981"
+          stroke="#34D399"
           label={`Structural RMSD trace at ${telemetry.rmsdNm.toFixed(2)} nanometers`}
         />
       </div>
